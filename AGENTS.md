@@ -4,7 +4,8 @@
 ## Project Information
 
 Project Name: SentinelOps
-Repository Name: sentinelops
+Repository Name: SentinelOps
+GitHub Repository: shrey799/SentinelOps
 Local Directory: C:\GitRepo\SentinelOps
 
 Project Description:
@@ -316,13 +317,31 @@ Follow these rules throughout the project:
 
 ## 10. GitHub Requirements
 
-Repository Name: sentinelops
+Repository Name: SentinelOps
+GitHub Repository: shrey799/SentinelOps
 
 Repository Description:
 Full-Stack Mini-SIEM & Security Operations
 and Threat Detection Platform.
 
-Use meaningful commit messages.
+### Branch and Pull Request Workflow
+
+- `main` is the stable branch.
+- `dev` is the active development branch. All development must happen on `dev`.
+- Before making changes, verify the current local branch with
+  `git branch --show-current`. If it is not `dev`, stop before editing and
+  resolve the branch selection with the user.
+- After each completed and tested milestone, prepare a Pull Request from
+  `dev` (source) to `main` (target), including a summary and validation results.
+- Never push directly to `main`.
+- Never push any branch or merge a Pull Request without explicit user approval.
+  Preparing a Pull Request does not authorize a push or merge.
+- Keep `README.md` updated with completed milestones and their verified results.
+- Use meaningful conventional commit messages in the format
+  `type(scope): description`, with an optional scope. Examples:
+  `feat(backend): add health-check endpoint`,
+  `fix(frontend): handle API connection failures`, and
+  `docs: update completed milestones`.
 
 Maintain a clean repository structure.
 
