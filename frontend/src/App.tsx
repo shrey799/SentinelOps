@@ -1,7 +1,7 @@
-﻿import WelcomeScreen from './components/WelcomeScreen'
+import Dashboard from './components/Dashboard'
 
 function App() {
-  return <WelcomeScreen />
+  return <Dashboard />
 }
 
 export default App
