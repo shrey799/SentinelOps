@@ -9,7 +9,8 @@ Repository: shrey799/SentinelOps. Active development branch: `dev`.
 - Milestone 1, Part 1: React + TypeScript + Vite frontend foundation with Tailwind CSS and a dark welcome screen.
 - Milestone 1, Part 2: modular FastAPI backend with health and synthetic authentication-event APIs; 17 automated tests passed.
 - Milestone 1, Part 3: React dashboard connected to FastAPI, with derived summaries, search, result filtering, refresh, and loading/error/empty states.
-- Milestone 1 implementation and automated checks are complete; manual browser review and user approval are pending before further work.
+- Milestone 1 implementation and automated checks are complete. Its browser visual-review limitation is documented below; Milestone 2 work was explicitly authorized.
+- Milestone 2, Part 1: JSON ingestion, normalization, and temporary in-memory event storage implemented. Verified: 56 backend tests, 17 frontend tests, 2 live integration tests, and frontend production build passed. Milestone 2 remains in progress; CSV ingestion is not implemented.
 
 The current frontend does not collect logs or perform security monitoring.
 
@@ -199,3 +200,127 @@ No detection engine, real log ingestion, database, Docker, or authentication is 
 Source: `dev`. Target: `main`. Title: `feat: complete full-stack SentinelOps foundation`.
 
 Description: Adds the React/TypeScript/Tailwind foundation and modular FastAPI synthetic-event API, then integrates them in a dashboard with derived summaries, search, filtering, refresh, and explicit request states. Validation: 17 frontend tests, 1 live integration test, 17 backend tests, and a successful production frontend build. Manual browser review remains pending. No PR has been published, and no commit, push, or merge is authorized by this preparation.
+
+## Milestone 2, Part 1 — JSON ingestion and normalization
+
+`POST /api/events/ingest` accepts **one synthetic JSON authentication event**, normalizes it, stores it, and returns the existing `SecurityEvent` response with HTTP **201**. `GET /api/events` returns the initial 12 samples plus newly ingested events. The frontend needs only Refresh; no upload form was added.
+
+### Request contract and supported normalization
+
+All six data fields below are required. `synthetic` is optional and defaults to `true`; `false` is rejected. Use fictional users and documentation-only IPs. Do not submit real security logs or credentials. This endpoint is currently a synthetic-data exercise, not a production collector.
+
+```json
+{
+  "timestamp": "2026-11-25T09:30:00-05:00",
+  "username": "  Morgan.Example  ",
+  "source_ip": " 192.0.2.88 ",
+  "event_type": " Authentication ",
+  "authentication_result": " FAILED ",
+  "source_system": " demo-vpn ",
+  "synthetic": true
+}
+```
+
+Example normalized response (the UUID changes on every submission):
+
+```json
+{
+  "event_id": "fb1cc348-5550-495a-8fb1-8a6ce8634726",
+  "timestamp": "2026-11-25T14:30:00Z",
+  "username": "Morgan.Example",
+  "source_ip": "192.0.2.88",
+  "event_type": "authentication",
+  "authentication_result": "failure",
+  "source_system": "demo-vpn",
+  "synthetic": true
+}
+```
+
+Rules:
+
+- Timestamps must be ISO 8601 strings containing `T` and a timezone (`Z` or an offset). Naive dates/times and numeric epoch values are rejected. Stored responses use UTC; `Z` means UTC. Unrepresentable UTC conversions are rejected.
+- Results are case-insensitive after trimming: `success`, `successful`, `succeeded` become `success`; `failure`, `failed`, `fail` become `failure`. Unknown values are rejected, not guessed.
+- Only `authentication` is supported as the event type; surrounding whitespace and letter case are normalized.
+- Usernames and source systems are trimmed and limited to 1–128 characters after trimming. **Username case is preserved.** No source-specific case-insensitive username policy is configured.
+- IP strings are trimmed and validated as IPv4 or IPv6, then serialized canonically. Validation checks address syntax; it does not perform IP lookups or network scans. Example data uses documentation-only addresses.
+- Each accepted event gets a fresh server-generated UUID v4. Caller-supplied `event_id` and other unknown fields are rejected. Repeating an identical request creates another event; content deduplication/idempotency is not implemented.
+- Request bodies are limited to 16 KiB of actual bytes before parsing, including requests without Content-Length. Timestamp/IP inputs are capped at 64 characters and result/type inputs at 32 characters.
+
+### PowerShell demonstration
+
+Run FastAPI and Vite in separate terminals using the integrated-dashboard commands above. From the repository root, submit the included example:
+
+```powershell
+cd C:\GitRepo\SentinelOps
+$body = Get-Content .\backend\examples\authentication_event.json -Raw
+$response = Invoke-WebRequest `
+  -Uri 'http://127.0.0.1:8000/api/events/ingest' `
+  -Method Post `
+  -ContentType 'application/json' `
+  -Body $body `
+  -UseBasicParsing
+$response.StatusCode
+$created = $response.Content | ConvertFrom-Json
+$created | ConvertTo-Json
+
+$events = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/events'
+$events | Where-Object event_id -eq $created.event_id | ConvertTo-Json
+```
+
+Expected status: 201. Open http://127.0.0.1:5173/, clear table filters, and press Refresh. Search `Morgan.Example` to locate the inserted record. The total and failure counts increase by one. Multiple example/test submissions accumulate until the backend restarts.
+
+Invalid JSON, missing/invalid fields, unsupported values, and oversized bodies return **422** without echoing submitted values. An unlikely generated-ID collision returns **409** without replacing a stored event. Unexpected errors return a generic **500**, without a stack trace. CORS still permits only the two local Vite origins; GET and POST are allowed, with the Content-Type header for JSON.
+
+### Architecture and interview guide
+
+```text
+POST JSON
+  -> body-size middleware
+  -> EventIngestRequest validation
+  -> normalize_event()
+  -> InMemoryEventRepository.add()
+  -> 201 normalized SecurityEvent
+
+GET /api/events
+  -> InMemoryEventRepository.list_events()
+  -> React Refresh -> updated summary and table
+```
+
+Important new/updated files and functions:
+
+- `backend/app/schemas/ingestion.py`: `EventIngestRequest` defines accepted inputs. `parse_timestamp()` requires an ISO timestamp string; `check_utc_range()` rejects UTC overflow; `trim_ip()` prepares IP validation; type/result validators normalize only documented values. Pydantic then checks required fields, lengths, IP syntax, and allowed literals.
+- `backend/app/services/normalization.py`: `normalize_result()` maps the supported aliases. `normalize_event()` generates a UUID, converts time to UTC, and constructs the existing output schema. It contains no HTTP or storage operations.
+- `backend/app/repositories/events.py`: `InMemoryEventRepository.add()` atomically checks IDs and stores copies; `list_events()` returns a copied snapshot so callers cannot mutate storage. A lock protects concurrent request threads. `DuplicateEventError` separates a storage conflict from its HTTP 409 representation. `get_repository()` supplies the app's repository to routes.
+- `backend/app/middleware.py`: `IngestBodyLimitMiddleware` bounds ingestion bytes before JSON parsing, including streamed requests.
+- `backend/app/routes/events.py`: GET reads the repository; POST orchestrates validation, normalization, insertion, and the 409 response. Storage logic stays outside routes.
+- `backend/app/main.py`: `create_app()` builds independent app instances; `lifespan()` seeds one repository at startup. Validation/error handlers omit submitted values and internal details. Existing health and response schemas are unchanged.
+- `backend/app/services/__init__.py` and `backend/app/repositories/__init__.py`: identify the new Python packages.
+- `backend/examples/authentication_event.json`: fictional normalization example for manual requests and automated tests.
+- `backend/tests/test_api.py`: existing endpoint checks retained; clients now use independent app instances, and the error test targets repository retrieval.
+- `backend/tests/test_ingestion.py`: ingestion, validation, aliases, UTC, unique IDs/collisions, body limits, storage isolation, safe errors, and CORS coverage.
+- `frontend/integration/dashboard.live.test.tsx`: existing live display check plus POST-and-Refresh verification using the real API. No frontend production code was changed.
+
+### Storage limitations
+
+The repository pattern gives routes a small storage interface (`add` and `list_events`) so storage can later move to PostgreSQL without putting SQL into route functions. This implementation is one Python dictionary **per running server process**, initialized with 12 samples. It is not durable: stopping, restarting, or development auto-reloading the backend loses ingested events. Multiple worker processes would each have different data; use one worker for this milestone. There is no retention policy, capacity limit on total stored events, pagination, or deduplication by content. Per-request limits do not bound total memory usage.
+
+### Concepts learned
+
+- **Security logs** record activity such as login attempts: who, when, where, and the outcome. Our records are fictional examples.
+- **Ingestion** means receiving logs into a SIEM for processing and later investigation.
+- **GET** reads events; **POST** submits a new event. A request **body** carries its JSON fields, separate from the URL and headers.
+- **Normalization** turns supported variations into one consistent representation, making filtering and future rules predictable.
+- **Pydantic** checks incoming fields against a model before route code stores anything. Invalid input produces 422.
+- **UTC** is a common time reference. Converting offsets to UTC lets logs from different timezones share a timeline.
+- **UUIDs** are identifiers designed to be unique; v4 uses random values. They identify records, not users or authentication credentials.
+- **In-memory storage** lives in the Python process and disappears when it ends; persistent storage is a future milestone.
+
+### Actual verification results
+
+- Backend: **56 passed**, including all 17 existing API tests. One existing Starlette/HTTPX deprecation warning; no pytest cache writes were requested.
+- Frontend: **17 passed**. Production TypeScript/Vite build passed.
+- Live integration: **2 passed**, using both real servers and the Vite proxy. The new test rendered the dashboard, posted a synthetic event, pressed Refresh, and verified the new row and increased total.
+- Manual PowerShell POST: HTTP **201**; returned `Morgan.Example`, `failure`, and `2026-11-25T14:30:00Z`. A subsequent GET included the new event.
+- Browser visual testing remains manual; live UI rendering/Refresh behavior was verified in jsdom, not a full browser.
+
+No CSV ingestion, upload form, detection engine, database, Docker, or authentication was added. Milestone 2, Part 2 has not started.

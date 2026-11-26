@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-11-25T09:30:00-05:00",
+  "username": "  Morgan.Example  ",
+  "source_ip": " 192.0.2.88 ",
+  "event_type": " Authentication ",
+  "authentication_result": " FAILED ",
+  "source_system": " demo-vpn ",
+  "synthetic": true
+}

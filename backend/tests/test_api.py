@@ -6,13 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.main import app
+from app.main import create_app
+from app.repositories.events import InMemoryEventRepository
 from app.schemas.events import SecurityEvent
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(create_app()) as test_client:
         yield test_client
 
 
@@ -82,11 +83,11 @@ def test_unsupported_method(client: TestClient) -> None:
 
 
 def test_internal_error_is_safe(monkeypatch: pytest.MonkeyPatch) -> None:
-    def broken_samples() -> list[SecurityEvent]:
+    def broken_samples(self: InMemoryEventRepository) -> list[SecurityEvent]:
         raise RuntimeError("private internal detail")
 
-    monkeypatch.setattr("app.routes.events.get_sample_events", broken_samples)
-    with TestClient(app, raise_server_exceptions=False) as client:
+    monkeypatch.setattr(InMemoryEventRepository, "list_events", broken_samples)
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
         response = client.get("/api/events")
     assert response.status_code == 500
     assert response.json() == {"detail": "Internal server error"}
